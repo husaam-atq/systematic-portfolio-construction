@@ -21,7 +21,7 @@ Outputs are saved in outputs/.
 
 ## Example Output
 
-![Equity Curve](outputs/equity_multifactor.png)
+![Equity Curve](example_results/equity_multifactor.png)
 
 
 ## Notes
