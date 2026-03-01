@@ -17,7 +17,7 @@ pip install -r requirements.txt
 Run:
 python -m src.cli --start 2018-01-01 --tc_bps 10 --target_vol 0.12
 
-Outputs are saved in outputs/.
+Example results are shown below. Full outputs are reproducible via the CLI.
 
 ## Example Output
 
