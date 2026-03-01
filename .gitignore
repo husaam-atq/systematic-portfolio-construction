@@ -1,0 +1,7 @@
+__pycache__/
+.ipynb_checkpoints/
+outputs/*.csv
+outputs/*.png
+outputs/*.json
+.DS_Store
+.env
