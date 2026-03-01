@@ -19,6 +19,11 @@ python -m src.cli --start 2018-01-01 --tc_bps 10 --target_vol 0.12
 
 Outputs are saved in outputs/.
 
+## Example Output
+
+![Equity Curve](outputs/equity_multifactor.png)
+
+
 ## Notes
 
 Results show raw factor behaviour and a simple multi-factor blend with risk targeting. The framework is designed to be extended with:
