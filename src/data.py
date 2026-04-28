@@ -10,6 +10,7 @@ ETF_UNIVERSE: dict[str, str] = {
     "EEM": "Emerging markets equities",
     "TLT": "Long-term US Treasuries",
     "IEF": "Intermediate US Treasuries",
+    "SHY": "Short-duration US Treasuries / cash proxy",
     "GLD": "Gold",
     "VNQ": "REITs",
     "DBC": "Commodities",
@@ -29,7 +30,7 @@ def download_prices(
         auto_adjust=True,
         progress=False,
         group_by="ticker",
-        threads=True,
+        threads=False,
     )
 
     if raw.empty:

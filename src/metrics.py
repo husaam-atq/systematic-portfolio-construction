@@ -143,3 +143,116 @@ def subperiod_summary(
                 }
             )
     return pd.DataFrame(rows)
+
+
+def benchmark_relative_metrics(
+    daily_returns: pd.DataFrame,
+    asset_returns: pd.DataFrame,
+    equal_weight_name: str = "Equal Weight",
+    spy_ticker: str = "SPY",
+    periods_per_year: int = TRADING_DAYS,
+) -> pd.DataFrame:
+    rows = []
+    equal_weight_returns = daily_returns[equal_weight_name].dropna()
+    spy_returns = asset_returns[spy_ticker].dropna() if spy_ticker in asset_returns.columns else pd.Series(dtype=float)
+
+    for strategy in daily_returns.columns:
+        strategy_returns = daily_returns[strategy].dropna()
+
+        aligned_strategy, aligned_equal = strategy_returns.align(equal_weight_returns, join="inner")
+        excess_equal = aligned_strategy - aligned_equal
+        tracking_error = excess_equal.std(ddof=0) * np.sqrt(periods_per_year)
+        information_ratio = (
+            excess_equal.mean() / excess_equal.std(ddof=0) * np.sqrt(periods_per_year)
+            if excess_equal.std(ddof=0) > 0
+            else float("nan")
+        )
+
+        aligned_strategy_spy, aligned_spy = strategy_returns.align(spy_returns, join="inner")
+        spy_variance = aligned_spy.var(ddof=0)
+        beta = (
+            aligned_strategy_spy.cov(aligned_spy, ddof=0) / spy_variance
+            if spy_variance > 0
+            else float("nan")
+        )
+
+        monthly_strategy = monthly_returns(aligned_strategy_spy)
+        monthly_spy = monthly_returns(aligned_spy)
+        monthly_strategy, monthly_spy = monthly_strategy.align(monthly_spy, join="inner")
+        up_months = monthly_spy > 0.0
+        down_months = monthly_spy < 0.0
+        upside_capture = (
+            monthly_strategy[up_months].mean() / monthly_spy[up_months].mean()
+            if up_months.any() and monthly_spy[up_months].mean() != 0
+            else float("nan")
+        )
+        downside_capture = (
+            monthly_strategy[down_months].mean() / monthly_spy[down_months].mean()
+            if down_months.any() and monthly_spy[down_months].mean() != 0
+            else float("nan")
+        )
+
+        rows.append(
+            {
+                "strategy": strategy,
+                "annualized_alpha_vs_equal_weight": float(excess_equal.mean() * periods_per_year),
+                "tracking_error_vs_equal_weight": float(tracking_error),
+                "information_ratio_vs_equal_weight": float(information_ratio),
+                "beta_vs_spy": float(beta),
+                "upside_capture_vs_spy": float(upside_capture),
+                "downside_capture_vs_spy": float(downside_capture),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def drawdown_duration(returns: pd.Series) -> int:
+    drawdowns = drawdown_series(returns.dropna())
+    max_duration = 0
+    current_duration = 0
+    for value in drawdowns:
+        if value < 0.0:
+            current_duration += 1
+            max_duration = max(max_duration, current_duration)
+        else:
+            current_duration = 0
+    return max_duration
+
+
+def period_return(returns: pd.Series, start: str, end: str) -> float:
+    period = returns.loc[start:end].dropna()
+    return total_return(period)
+
+
+def stress_results(daily_returns: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for strategy in daily_returns.columns:
+        returns = daily_returns[strategy].dropna()
+        monthly = monthly_returns(returns)
+        rolling_3m = (1.0 + monthly).rolling(3).apply(np.prod, raw=True) - 1.0
+        drawdowns = drawdown_series(returns)
+        negative_drawdowns = drawdowns[drawdowns < 0.0]
+
+        rows.append(
+            {
+                "strategy": strategy,
+                "max_drawdown": max_drawdown(returns),
+                "average_drawdown": float(negative_drawdowns.mean()) if not negative_drawdowns.empty else 0.0,
+                "max_drawdown_duration_days": drawdown_duration(returns),
+                "worst_1_month_return": float(monthly.min()) if not monthly.empty else float("nan"),
+                "worst_3_month_return": float(rolling_3m.min()) if not rolling_3m.empty else float("nan"),
+                "covid_crash_return_2020_02_19_to_2020_03_23": period_return(
+                    returns,
+                    "2020-02-19",
+                    "2020-03-23",
+                ),
+                "inflation_rate_shock_return_2022": period_return(
+                    returns,
+                    "2022-01-01",
+                    "2022-12-31",
+                ),
+            }
+        )
+
+    return pd.DataFrame(rows)

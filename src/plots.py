@@ -117,3 +117,44 @@ def plot_performance_comparison(performance: pd.DataFrame, path: str | Path) -> 
         ax.tick_params(axis="x", rotation=35)
     fig.suptitle("Performance Comparison", y=1.02)
     _save(path)
+
+
+def plot_strategy_group(
+    daily_returns: pd.DataFrame,
+    strategies: list[str],
+    path: str | Path,
+    title: str,
+) -> None:
+    selected = daily_returns[[strategy for strategy in strategies if strategy in daily_returns.columns]]
+    equity = (1.0 + selected.fillna(0.0)).cumprod()
+    plt.figure(figsize=(11, 6))
+    for column in equity.columns:
+        plt.plot(equity.index, equity[column], label=column, linewidth=1.7)
+    plt.title(title)
+    plt.ylabel("Growth of $1")
+    plt.xlabel("")
+    plt.grid(alpha=0.25)
+    plt.legend(frameon=False, ncol=2)
+    _save(path)
+
+
+def plot_stress_period_comparison(
+    stress: pd.DataFrame,
+    path: str | Path,
+    top_n: int = 12,
+) -> None:
+    fields = [
+        "covid_crash_return_2020_02_19_to_2020_03_23",
+        "inflation_rate_shock_return_2022",
+    ]
+    labels = ["2020 crash", "2022 inflation/rate shock"]
+    ranked = stress.sort_values("inflation_rate_shock_return_2022", ascending=False).head(top_n)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+    for ax, field, label in zip(axes, fields, labels, strict=True):
+        ranked.set_index("strategy")[field].plot(kind="barh", ax=ax, color="#4C78A8")
+        ax.set_title(label)
+        ax.set_xlabel("Return")
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{value:.0%}"))
+        ax.grid(axis="x", alpha=0.25)
+    fig.suptitle("Stress Period Comparison", y=1.02)
+    _save(path)

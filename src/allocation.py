@@ -11,6 +11,9 @@ STRATEGY_NAMES = [
     "Minimum Variance",
     "Maximum Sharpe",
     "Risk Parity",
+    "Minimum Variance Shrinkage",
+    "Maximum Sharpe Shrinkage",
+    "Risk Parity Shrinkage",
 ]
 
 
@@ -18,8 +21,12 @@ def _equal_weight(n_assets: int) -> np.ndarray:
     return np.repeat(1.0 / n_assets, n_assets)
 
 
-def _clean_covariance(returns: pd.DataFrame) -> np.ndarray:
-    cov = returns.cov().to_numpy(dtype=float)
+def covariance_matrix(returns: pd.DataFrame, shrinkage: float = 0.0) -> np.ndarray:
+    """Estimate covariance, optionally shrinking sample covariance toward its diagonal."""
+    sample_cov = returns.cov().to_numpy(dtype=float)
+    diagonal_cov = np.diag(np.diag(sample_cov))
+    shrinkage = float(np.clip(shrinkage, 0.0, 1.0))
+    cov = ((1.0 - shrinkage) * sample_cov) + (shrinkage * diagonal_cov)
     cov = np.nan_to_num(cov, nan=0.0, posinf=0.0, neginf=0.0)
     cov = cov + np.eye(cov.shape[0]) * 1e-10
     return cov
@@ -75,8 +82,12 @@ def inverse_volatility(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Se
     return pd.Series(weights, index=returns.columns)
 
 
-def minimum_variance(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Series:
-    cov = _clean_covariance(returns)
+def minimum_variance(
+    returns: pd.DataFrame,
+    max_weight: float = 0.40,
+    covariance_shrinkage: float = 0.0,
+) -> pd.Series:
+    cov = covariance_matrix(returns, shrinkage=covariance_shrinkage)
     n_assets = returns.shape[1]
     x0 = inverse_volatility(returns, max_weight=max_weight).to_numpy()
 
@@ -95,8 +106,12 @@ def minimum_variance(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Seri
     return pd.Series(cap_weights(weights, max_weight=max_weight), index=returns.columns)
 
 
-def maximum_sharpe(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Series:
-    cov = _clean_covariance(returns) * 252.0
+def maximum_sharpe(
+    returns: pd.DataFrame,
+    max_weight: float = 0.40,
+    covariance_shrinkage: float = 0.0,
+) -> pd.Series:
+    cov = covariance_matrix(returns, shrinkage=covariance_shrinkage) * 252.0
     mean_returns = returns.mean().to_numpy(dtype=float) * 252.0
     n_assets = returns.shape[1]
     x0 = equal_weight(returns).to_numpy()
@@ -119,8 +134,12 @@ def maximum_sharpe(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Series
     return pd.Series(cap_weights(weights, max_weight=max_weight), index=returns.columns)
 
 
-def risk_parity(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Series:
-    cov = _clean_covariance(returns)
+def risk_parity(
+    returns: pd.DataFrame,
+    max_weight: float = 0.40,
+    covariance_shrinkage: float = 0.0,
+) -> pd.Series:
+    cov = covariance_matrix(returns, shrinkage=covariance_shrinkage)
     n_assets = returns.shape[1]
     target = np.repeat(1.0 / n_assets, n_assets)
     x0 = inverse_volatility(returns, max_weight=max_weight).to_numpy()
@@ -147,6 +166,7 @@ def risk_parity(returns: pd.DataFrame, max_weight: float = 0.40) -> pd.Series:
 def estimate_allocation_weights(
     trailing_returns: pd.DataFrame,
     max_weight: float = 0.40,
+    shrinkage: float = 0.25,
 ) -> dict[str, pd.Series]:
     """Estimate all allocation methods from the same trailing return window."""
     clean_returns = trailing_returns.dropna(how="any")
@@ -156,4 +176,19 @@ def estimate_allocation_weights(
         "Minimum Variance": minimum_variance(clean_returns, max_weight=max_weight),
         "Maximum Sharpe": maximum_sharpe(clean_returns, max_weight=max_weight),
         "Risk Parity": risk_parity(clean_returns, max_weight=max_weight),
+        "Minimum Variance Shrinkage": minimum_variance(
+            clean_returns,
+            max_weight=max_weight,
+            covariance_shrinkage=shrinkage,
+        ),
+        "Maximum Sharpe Shrinkage": maximum_sharpe(
+            clean_returns,
+            max_weight=max_weight,
+            covariance_shrinkage=shrinkage,
+        ),
+        "Risk Parity Shrinkage": risk_parity(
+            clean_returns,
+            max_weight=max_weight,
+            covariance_shrinkage=shrinkage,
+        ),
     }
