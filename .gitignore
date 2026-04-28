@@ -1,7 +1,9 @@
 __pycache__/
+.venv/
+venv/
 .ipynb_checkpoints/
 outputs/*.csv
-outputs/*.png
 outputs/*.json
+!outputs/.gitkeep
 .DS_Store
 .env
