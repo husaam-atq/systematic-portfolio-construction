@@ -1,0 +1,94 @@
+{
+  "confirmation_methods": [
+    "Equal Weight",
+    "Traditional 60/40",
+    "Inverse Volatility",
+    "Minimum Variance",
+    "Minimum Variance Shrinkage",
+    "Risk Parity",
+    "Risk Parity Shrinkage",
+    "Hierarchical Risk Parity",
+    "Maximum Sharpe",
+    "Maximum Sharpe Shrinkage",
+    "Dual Momentum Equal Weight",
+    "Maximum Sharpe Vol Target 10%"
+  ],
+  "confirmation_policy": {
+    "changes_after_viewing": "prohibited",
+    "end_is_exclusive": true,
+    "execution_count": 1,
+    "method_selection": "fixed before confirmation; inclusion is comparative, not endorsement"
+  },
+  "data_policy": {
+    "confirmation_download_starts": "2025-01-01",
+    "development_snapshot_is_reused_without_redownload": true,
+    "price_field": "yfinance auto-adjusted close",
+    "short_internal_gap_forward_fill_limit_days": 3,
+    "universe_is_fixed": true
+  },
+  "development_price_sha256": "8144e7846a8719ab5c4598bc5080c8ce22f79cc17e7072bb859956937e6863e8",
+  "evaluation_policy": {
+    "benchmark_order": [
+      "Equal Weight",
+      "Traditional 60/40",
+      "SPY informational"
+    ],
+    "cash_hurdle_for_sharpe_sortino": "contemporaneous SHY total return",
+    "confirmation_is_not_an_optimization_sample": true,
+    "headline_methods_are_not_rank_selected": true,
+    "returns_are_net_of_transaction_costs": true
+  },
+  "frozen_on": "2026-08-25",
+  "methodology_commit": "fa92667b5a224a3ef9111d82b4b718e252f0167b",
+  "protocol_version": "1.0.0",
+  "research_config": {
+    "bootstrap_block_days": 21,
+    "bootstrap_resamples": 500,
+    "bootstrap_seed": 20260825,
+    "cash_proxy": "SHY",
+    "confirmation_end_exclusive": "2026-08-25",
+    "confirmation_start": "2025-01-01",
+    "covariance_shrinkage": 0.25,
+    "development_end_exclusive": "2025-01-01",
+    "development_start": "2010-01-01",
+    "estimation_window": 252,
+    "financing_spread_annual": 0.005,
+    "max_asset_weight": 0.4,
+    "momentum_lookback_days": 252,
+    "momentum_skip_days": 21,
+    "momentum_top_n": 3,
+    "rebalance_frequency": "monthly",
+    "transaction_cost_bps": 5.0,
+    "trend_moving_average_days": 200,
+    "volatility_max_leverage": 1.5,
+    "volatility_target": 0.1,
+    "volatility_window": 63
+  },
+  "simulation_policy": {
+    "cash_below_one_x": "earns SHY total return",
+    "financing_above_one_x": "pays SHY total return plus 50 bps annual spread",
+    "holdings_drift": true,
+    "maximum_gross_exposure": 1.5,
+    "target_formed_at_close_t_first_earns": "return t+1",
+    "transaction_cost_basis": "sum of absolute ETF trades from drifted pre-trade holdings",
+    "volatility_scale_lag_days": 1
+  },
+  "source_hashes": {
+    "confirmation.py": "9c0095f39c1e1046215ce92e07bedab6892c810a1b5b8d8a10d982e17a1387ab",
+    "main.py": "fd47514b046577293d525974e7adfcc005b0a8cbe5c39bd740f0faa21ea6727d",
+    "requirements.txt": "1fea3ed9ec0a9564276850fc1832cf7d3a121c897295dd08842ac5bb765bcf34",
+    "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/allocation.py": "9fc754534289ab963db169d83ef30f40cc655e014d189fb9ec0a9d60dbda1674",
+    "src/backtest.py": "388d6f74bceaa465f2e1a891764f978ee5aea79b7ee420835908f830c3093f80",
+    "src/config.py": "f9db0a8735adfe6536921b20d6b7159a94f74548fe404706ddd3d3944244f2c2",
+    "src/data.py": "bbab8f7187811e90c26d1a68f8cbfd3ba17a73dbfe7c0cae678645ff9e495682",
+    "src/freeze.py": "728cf602bde24b9b9398ef5395374a1f64b7cf94b4756eeeaf984364a5e40273",
+    "src/metrics.py": "2208e0d31caa6875446cb0415075e17c7074992d3d5d24737d107764d4952761",
+    "src/plots.py": "28bd3213f95db1d15b2d1af56aaa419aa382ab6c09543264c41b15bdbb5d5dd8",
+    "src/reporting.py": "e8a8b7ac122e166fcecd816e0a4efeaf4413095cc9d71a8768675361b20daa2a",
+    "src/risk.py": "e62d834682247ddc02f6bc8ded1798cef566ba0e65e4bcbe53914dd5b8050adb",
+    "src/robustness.py": "19b22a59baa8a947ff1ca9f50fef9b9d4c649865cf82e142d208718c33e17c38",
+    "src/signals.py": "c5a1db1140c04451f0e6f5d11bf6390b61e0e95e04b3cd005fbef3a7d352f71b",
+    "src/simulation.py": "7625ad96dfe55b9ed0dda1299346e1864fb3c321adf6a79c35984f198b6e39ce"
+  }
+}
