@@ -4,325 +4,306 @@ import numpy as np
 import pandas as pd
 
 from src.allocation import (
-    STRATEGY_NAMES,
-    equal_weight,
+    AllocationResult,
+    covariance_matrix,
+    estimate_expected_returns,
+    estimate_method,
     inverse_volatility,
-    maximum_sharpe,
-    minimum_variance,
-    risk_parity,
-    estimate_allocation_weights,
 )
-from src.risk import component_risk_contribution
+from src.config import ResearchConfig, STATIC_METHODS, TACTICAL_METHODS, VOL_TARGET_BASE_METHODS
+from src.risk import risk_snapshot
+from src.signals import dual_momentum, trend_eligibility
+from src.simulation import SimulationResult, simulate_portfolio
 
 
-def month_end_trading_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Return the last available trading date in each calendar month."""
-    dates = pd.Series(index=index, data=index)
-    return pd.DatetimeIndex(dates.groupby([index.year, index.month]).tail(1).to_list())
+def rebalance_dates(index: pd.DatetimeIndex, frequency: str = "monthly") -> pd.DatetimeIndex:
+    if frequency == "monthly":
+        periods = index.to_period("M")
+    elif frequency == "quarterly":
+        periods = index.to_period("Q")
+    else:
+        raise ValueError("Rebalance frequency must be monthly or quarterly.")
+    series = pd.Series(index, index=index)
+    return pd.DatetimeIndex(series.groupby(periods).last().to_numpy())
 
 
-def generate_weight_decisions(
-    returns: pd.DataFrame,
-    prices: pd.DataFrame | None = None,
-    estimation_window: int = 252,
-    max_weight: float = 0.40,
-    shrinkage: float = 0.25,
-    cash_proxy: str = "SHY",
-) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
-    """
-    Estimate monthly allocation weights using only trailing returns.
-
-    For a rebalance date at position i, the estimation window is
-    returns.iloc[i - estimation_window:i], which excludes the rebalance date
-    return and all future returns. The resulting decision is applied by
-    run_backtest starting on the next trading session.
-    """
-    rebalance_dates = month_end_trading_dates(returns.index)
-    trend_strategies = [
-        "Trend Filtered Equal Weight",
-        "Trend Filtered Minimum Variance",
-        "Trend Filtered Risk Parity",
-    ]
-    dual_momentum_strategies = [
-        "Dual Momentum Equal Weight",
-        "Dual Momentum Inverse Vol",
-    ]
-    all_strategies = [*STRATEGY_NAMES, *trend_strategies, *dual_momentum_strategies]
-    decisions = {
-        strategy: pd.DataFrame(index=rebalance_dates, columns=returns.columns, dtype=float)
-        for strategy in all_strategies
-    }
-    risk_records: list[dict[str, float | str | pd.Timestamp]] = []
-    trend_signal = trend_eligibility(prices) if prices is not None else None
-    momentum_signal = dual_momentum_signal(prices) if prices is not None else None
-
-    for rebalance_date in rebalance_dates:
-        position = returns.index.get_loc(rebalance_date)
-        if position < estimation_window:
-            continue
-
-        trailing_returns = returns.iloc[position - estimation_window:position].dropna(how="any")
-        if len(trailing_returns) < estimation_window:
-            continue
-
-        estimated = estimate_allocation_weights(
-            trailing_returns,
-            max_weight=max_weight,
-            shrinkage=shrinkage,
-        )
-
-        if trend_signal is not None:
-            trend_weights = estimate_trend_filtered_weights(
-                trailing_returns=trailing_returns,
-                trend_row=trend_signal.reindex(returns.index).loc[rebalance_date],
-                max_weight=max_weight,
-                cash_proxy=cash_proxy,
-            )
-            estimated.update(trend_weights)
-
-        if momentum_signal is not None:
-            momentum_weights = estimate_dual_momentum_weights(
-                trailing_returns=trailing_returns,
-                momentum_row=momentum_signal.reindex(returns.index).loc[rebalance_date],
-                max_weight=max_weight,
-                cash_proxy=cash_proxy,
-            )
-            estimated.update(momentum_weights)
-
-        covariance = trailing_returns.cov()
-
-        for strategy, weights in estimated.items():
-            decisions[strategy].loc[rebalance_date, weights.index] = weights
-            contribution, portfolio_volatility = component_risk_contribution(weights, covariance)
-            for asset, value in contribution.items():
-                risk_records.append(
-                    {
-                        "date": rebalance_date,
-                        "strategy": strategy,
-                        "asset": asset,
-                        "component_risk_contribution": value,
-                        "portfolio_volatility": portfolio_volatility,
-                    }
-                )
-
-    risk_contributions = pd.DataFrame(risk_records)
-    return decisions, risk_contributions
-
-
-def trend_eligibility(
-    prices: pd.DataFrame,
-    lookback: int = 252,
-    defensive_assets: tuple[str, ...] = ("SHY", "IEF", "TLT"),
-) -> pd.DataFrame:
-    """
-    Build lagged trend eligibility from prices.
-
-    The signal uses the prior trading day's close relative to its 200-day
-    moving average, so a rebalance never uses the same close that would be
-    needed to trade the rebalance date return.
-    """
-    lagged_prices = prices.shift(1)
-    moving_average = lagged_prices.rolling(200).mean()
-    trend = lagged_prices > moving_average
-    trend = trend.where(lagged_prices.rolling(lookback).count() >= lookback)
-    for asset in defensive_assets:
-        if asset in trend.columns:
-            trend[asset] = True
-    return trend.fillna(False)
-
-
-def dual_momentum_signal(prices: pd.DataFrame) -> pd.DataFrame:
-    """
-    Trailing 12-month momentum excluding the most recent month, lagged one day.
-
-    At date t this uses prices through t-1 and excludes approximately the most
-    recent 21 trading days, preventing same-day close information from entering
-    a rebalance.
-    """
-    lagged_prices = prices.shift(1)
-    return lagged_prices.shift(21) / lagged_prices.shift(252) - 1.0
-
-
-def _zero_weight(index: pd.Index) -> pd.Series:
-    return pd.Series(0.0, index=index)
-
-
-def _expand_weights(weights: pd.Series, columns: pd.Index) -> pd.Series:
-    expanded = _zero_weight(columns)
-    expanded.loc[weights.index] = weights
-    return expanded
-
-
-def estimate_trend_filtered_weights(
-    trailing_returns: pd.DataFrame,
-    trend_row: pd.Series,
-    max_weight: float = 0.40,
-    cash_proxy: str = "SHY",
-) -> dict[str, pd.Series]:
-    eligible_assets = trend_row[trend_row.fillna(False)].index.intersection(trailing_returns.columns)
-    if len(eligible_assets) == 0 and cash_proxy in trailing_returns.columns:
-        eligible_assets = pd.Index([cash_proxy])
-
-    filtered_returns = trailing_returns.loc[:, eligible_assets].dropna(how="any")
-    if filtered_returns.empty:
-        fallback = _zero_weight(trailing_returns.columns)
-        if cash_proxy in fallback.index:
-            fallback.loc[cash_proxy] = 1.0
-        return {
-            "Trend Filtered Equal Weight": fallback,
-            "Trend Filtered Minimum Variance": fallback,
-            "Trend Filtered Risk Parity": fallback,
-        }
-
-    feasible_max_weight = max(max_weight, 1.0 / filtered_returns.shape[1])
+def _diagnostic_row(
+    date: pd.Timestamp,
+    strategy: str,
+    result: AllocationResult,
+    input_start: pd.Timestamp,
+    input_end: pd.Timestamp,
+    observations: int,
+) -> dict[str, object]:
     return {
-        "Trend Filtered Equal Weight": _expand_weights(
-            equal_weight(filtered_returns, max_weight=feasible_max_weight),
-            trailing_returns.columns,
-        ),
-        "Trend Filtered Minimum Variance": _expand_weights(
-            minimum_variance(filtered_returns, max_weight=feasible_max_weight),
-            trailing_returns.columns,
-        ),
-        "Trend Filtered Risk Parity": _expand_weights(
-            risk_parity(filtered_returns, max_weight=feasible_max_weight),
-            trailing_returns.columns,
-        ),
+        "date": date,
+        "strategy": strategy,
+        "input_start": input_start,
+        "input_end": input_end,
+        "estimation_observations": observations,
+        **result.diagnostics,
     }
 
 
-def estimate_dual_momentum_weights(
+def _record_risk(
+    date: pd.Timestamp,
+    strategy: str,
+    result: AllocationResult,
+) -> list[dict[str, object]]:
+    snapshot = risk_snapshot(result.weights, result.covariance)
+    snapshot.insert(0, "strategy", strategy)
+    snapshot.insert(0, "date", date)
+    return snapshot.to_dict(orient="records")
+
+
+def _trend_result(
+    base_result: AllocationResult,
+    eligibility: pd.Series,
+    cash_proxy: str,
+    method: str,
+) -> AllocationResult:
+    weights = base_result.weights.copy()
+    risky_assets = [asset for asset in weights.index if asset != cash_proxy]
+    ineligible = [asset for asset in risky_assets if not bool(eligibility.get(asset, False))]
+    defensive_transfer = float(weights.loc[ineligible].sum()) if ineligible else 0.0
+    weights.loc[ineligible] = 0.0
+    weights.loc[cash_proxy] += defensive_transfer
+    diagnostics = dict(base_result.diagnostics)
+    diagnostics.update(
+        {
+            "method": method,
+            "trend_ineligible_assets": len(ineligible),
+            "defensive_transfer": defensive_transfer,
+            "max_weight": float(weights.max()),
+            "weight_hhi": float((weights**2).sum()),
+            "effective_assets": float(1.0 / (weights**2).sum()),
+            "weight_dispersion": float(weights.std(ddof=0)),
+        }
+    )
+    return AllocationResult(weights, base_result.covariance, base_result.expected_returns, diagnostics)
+
+
+def _dual_momentum_result(
     trailing_returns: pd.DataFrame,
     momentum_row: pd.Series,
-    max_weight: float = 0.40,
-    cash_proxy: str = "SHY",
-    top_n: int = 3,
-) -> dict[str, pd.Series]:
-    valid_momentum = momentum_row.dropna().reindex(trailing_returns.columns).dropna()
-    selected = valid_momentum[valid_momentum > 0.0].sort_values(ascending=False).head(top_n).index
-    weights_equal = _zero_weight(trailing_returns.columns)
-    weights_inverse_vol = _zero_weight(trailing_returns.columns)
+    cash_proxy: str,
+    top_n: int,
+    inverse_vol: bool,
+) -> AllocationResult:
+    risky_assets = [asset for asset in trailing_returns.columns if asset != cash_proxy]
+    ranked = momentum_row.reindex(risky_assets).dropna()
+    selected = ranked[ranked > 0.0].sort_values(ascending=False).head(top_n).index.tolist()
+    weights = pd.Series(0.0, index=trailing_returns.columns)
+    risky_budget = len(selected) / top_n
+    if selected:
+        if inverse_vol:
+            selected_weights = inverse_volatility(
+                trailing_returns[selected],
+                max_weight=max(1.0 / len(selected), 0.40),
+            )
+            weights.loc[selected] = selected_weights * risky_budget
+        else:
+            weights.loc[selected] = 1.0 / top_n
+    weights.loc[cash_proxy] = 1.0 - weights.sum()
+    covariance = covariance_matrix(trailing_returns)
+    hhi = float((weights**2).sum())
+    diagnostics: dict[str, float | int | bool | str] = {
+        "method": "dual_momentum_inverse_volatility" if inverse_vol else "dual_momentum_equal_weight",
+        "solver_success": True,
+        "solver_status": "rule based",
+        "condition_number": float(np.linalg.cond(covariance.to_numpy())),
+        "bound_count": 0,
+        "max_weight": float(weights.max()),
+        "weight_hhi": hhi,
+        "effective_assets": float(1.0 / hhi),
+        "weight_dispersion": float(weights.std(ddof=0)),
+        "selected_assets": len(selected),
+    }
+    return AllocationResult(weights, covariance, estimate_expected_returns(trailing_returns), diagnostics)
 
-    if len(selected) > 0:
-        selected_weight = min(len(selected), top_n) / top_n
-        equal_selected = pd.Series(selected_weight / len(selected), index=selected)
-        weights_equal.loc[selected] = equal_selected
 
-        selected_returns = trailing_returns.loc[:, selected].dropna(how="any")
-        feasible_max_weight = max(max_weight, 1.0 / selected_returns.shape[1])
-        inv_selected = inverse_volatility(selected_returns, max_weight=feasible_max_weight)
-        weights_inverse_vol.loc[selected] = inv_selected * selected_weight
+def generate_target_weights(
+    asset_returns: pd.DataFrame,
+    prices: pd.DataFrame,
+    config: ResearchConfig,
+    methods: list[str] | None = None,
+    estimation_window: int | None = None,
+    rebalance_frequency: str | None = None,
+    max_asset_weight: float | None = None,
+    shrinkage: float | None = None,
+    expected_return_estimator: str = "sample",
+    trend_moving_average_days: int | None = None,
+    momentum_lookback_days: int | None = None,
+    momentum_skip_days: int | None = None,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]:
+    """Create close-t targets using data through t; simulation applies them after return t."""
+    selected_methods = methods or [*STATIC_METHODS, *TACTICAL_METHODS]
+    window = estimation_window or config.estimation_window
+    frequency = rebalance_frequency or config.rebalance_frequency
+    cap = max_asset_weight or config.max_asset_weight
+    shrink = config.covariance_shrinkage if shrinkage is None else shrinkage
+    trend_days = trend_moving_average_days or config.trend_moving_average_days
+    momentum_days = momentum_lookback_days or config.momentum_lookback_days
+    skip_days = momentum_skip_days or config.momentum_skip_days
+    dates = rebalance_dates(asset_returns.index, frequency)
+    targets = {
+        method: pd.DataFrame(index=dates, columns=asset_returns.columns, dtype=float)
+        for method in selected_methods
+    }
+    diagnostics: list[dict[str, object]] = []
+    risk_records: list[dict[str, object]] = []
+    trend = trend_eligibility(prices, moving_average_days=trend_days, cash_proxy=config.cash_proxy)
+    momentum = dual_momentum(prices, lookback_days=momentum_days, skip_days=skip_days)
 
-    cash_weight = 1.0 - weights_equal.sum()
-    if cash_proxy in weights_equal.index and cash_weight > 0.0:
-        weights_equal.loc[cash_proxy] += cash_weight
-        weights_inverse_vol.loc[cash_proxy] += 1.0 - weights_inverse_vol.sum()
+    for date in dates:
+        position = asset_returns.index.get_loc(date)
+        if position + 1 < window:
+            continue
+        trailing = asset_returns.iloc[position - window + 1 : position + 1]
+        if len(trailing) != window or trailing.index.max() != date:
+            continue
 
+        results: dict[str, AllocationResult] = {}
+        for method in [method for method in selected_methods if method in STATIC_METHODS]:
+            results[method] = estimate_method(
+                method,
+                trailing,
+                max_weight=cap,
+                shrinkage=shrink,
+                expected_return_estimator=expected_return_estimator,
+                risk_free_asset=config.cash_proxy,
+            )
+
+        if "Trend Filtered Equal Weight" in selected_methods:
+            base = estimate_method("Equal Weight", trailing, max_weight=cap)
+            results["Trend Filtered Equal Weight"] = _trend_result(
+                base, trend.loc[date], config.cash_proxy, "trend_filtered_equal_weight"
+            )
+        if "Trend Filtered Minimum Variance" in selected_methods:
+            base = estimate_method("Minimum Variance", trailing, max_weight=cap)
+            results["Trend Filtered Minimum Variance"] = _trend_result(
+                base, trend.loc[date], config.cash_proxy, "trend_filtered_minimum_variance"
+            )
+        if "Trend Filtered Risk Parity" in selected_methods:
+            base = estimate_method("Risk Parity", trailing, max_weight=cap)
+            results["Trend Filtered Risk Parity"] = _trend_result(
+                base, trend.loc[date], config.cash_proxy, "trend_filtered_risk_parity"
+            )
+        if "Dual Momentum Equal Weight" in selected_methods:
+            results["Dual Momentum Equal Weight"] = _dual_momentum_result(
+                trailing,
+                momentum.loc[date],
+                config.cash_proxy,
+                config.momentum_top_n,
+                inverse_vol=False,
+            )
+        if "Dual Momentum Inverse Volatility" in selected_methods:
+            results["Dual Momentum Inverse Volatility"] = _dual_momentum_result(
+                trailing,
+                momentum.loc[date],
+                config.cash_proxy,
+                config.momentum_top_n,
+                inverse_vol=True,
+            )
+
+        for strategy, result in results.items():
+            targets[strategy].loc[date] = result.weights
+            diagnostics.append(
+                _diagnostic_row(date, strategy, result, trailing.index.min(), trailing.index.max(), len(trailing))
+            )
+            risk_records.extend(_record_risk(date, strategy, result))
+
+    targets = {strategy: frame.dropna(how="all") for strategy, frame in targets.items()}
+    return targets, pd.DataFrame(diagnostics), pd.DataFrame(risk_records)
+
+
+def simulate_strategies(
+    asset_returns: pd.DataFrame,
+    targets: dict[str, pd.DataFrame],
+    config: ResearchConfig,
+    transaction_cost_bps: float | None = None,
+) -> dict[str, SimulationResult]:
+    cash_returns = asset_returns[config.cash_proxy]
+    cost = config.transaction_cost_bps if transaction_cost_bps is None else transaction_cost_bps
     return {
-        "Dual Momentum Equal Weight": weights_equal,
-        "Dual Momentum Inverse Vol": weights_inverse_vol,
+        strategy: simulate_portfolio(
+            asset_returns,
+            target,
+            cash_returns,
+            transaction_cost_bps=cost,
+            financing_spread_annual=config.financing_spread_annual,
+            max_leverage=config.volatility_max_leverage,
+        )
+        for strategy, target in targets.items()
     }
 
 
-def run_backtest(
-    returns: pd.DataFrame,
-    decision_weights: pd.DataFrame,
-    tc_bps: float = 5.0,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Apply rebalance decisions after they are calculated and subtract costs.
+def volatility_target_weights(
+    base_simulation: SimulationResult,
+    asset_returns: pd.DataFrame,
+    target_volatility: float,
+    window: int,
+    max_leverage: float,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Create daily close-t exposure targets from a one-day-lagged realised-vol estimate."""
+    gross = base_simulation.performance["gross_return"]
+    realised_volatility = gross.rolling(window, min_periods=window).std(ddof=0) * np.sqrt(252.0)
+    scale = (target_volatility / realised_volatility).clip(0.0, max_leverage).shift(1)
+    base_assets = base_simulation.post_trade_weights[asset_returns.columns]
+    targets = base_assets.mul(scale, axis=0).dropna(how="all")
+    return targets, scale
 
-    decision_weights are timestamped on rebalance dates. The one-day shift
-    prevents same-day returns from benefiting from weights that were only
-    estimated at that rebalance.
-    """
-    decisions = decision_weights.reindex(returns.index).ffill()
-    applied_weights = decisions.shift(1).fillna(0.0)
 
-    gross_returns = (applied_weights * returns).sum(axis=1)
-    turnover = applied_weights.diff().abs().sum(axis=1)
-    turnover.iloc[0] = applied_weights.iloc[0].abs().sum()
-    costs = turnover.fillna(0.0) * (tc_bps / 10000.0)
-    net_returns = gross_returns - costs
+def add_volatility_target_simulations(
+    simulations: dict[str, SimulationResult],
+    asset_returns: pd.DataFrame,
+    config: ResearchConfig,
+    target_volatility: float | None = None,
+) -> tuple[dict[str, SimulationResult], pd.DataFrame]:
+    target = config.volatility_target if target_volatility is None else target_volatility
+    metadata = []
+    additions: dict[str, SimulationResult] = {}
+    for base_method in VOL_TARGET_BASE_METHODS:
+        if base_method not in simulations:
+            continue
+        target_weights, scale = volatility_target_weights(
+            simulations[base_method],
+            asset_returns,
+            target,
+            config.volatility_window,
+            config.volatility_max_leverage,
+        )
+        strategy = f"{base_method} Vol Target {target:.0%}"
+        additions[strategy] = simulate_portfolio(
+            asset_returns,
+            target_weights,
+            asset_returns[config.cash_proxy],
+            transaction_cost_bps=config.transaction_cost_bps,
+            financing_spread_annual=config.financing_spread_annual,
+            max_leverage=config.volatility_max_leverage,
+        )
+        metadata.append(
+            {
+                "strategy": strategy,
+                "base_strategy": base_method,
+                "target_volatility": target,
+                "average_scale": float(scale.dropna().mean()),
+                "maximum_scale": float(scale.dropna().max()),
+                "fraction_above_one_x": float((scale.dropna() > 1.0).mean()),
+            }
+        )
+    simulations.update(additions)
+    return simulations, pd.DataFrame(metadata)
 
-    result = pd.DataFrame(
-        {
-            "gross_return": gross_returns,
-            "turnover": turnover.fillna(0.0),
-            "transaction_cost": costs,
-            "net_return": net_returns,
-        },
-        index=returns.index,
+
+def daily_return_frame(simulations: dict[str, SimulationResult], field: str = "net_return") -> pd.DataFrame:
+    return pd.DataFrame(
+        {strategy: simulation.performance[field] for strategy, simulation in simulations.items()}
     )
-    active_period = applied_weights.abs().sum(axis=1).gt(1e-12).cummax()
-    result.loc[~active_period, :] = pd.NA
-    return result, applied_weights
 
 
-def run_backtest_from_applied_weights(
-    returns: pd.DataFrame,
-    applied_weights: pd.DataFrame,
-    tc_bps: float = 5.0,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    applied_weights = applied_weights.reindex(returns.index).fillna(0.0)
-    gross_returns = (applied_weights * returns).sum(axis=1)
-    turnover = applied_weights.diff().abs().sum(axis=1)
-    turnover.iloc[0] = applied_weights.iloc[0].abs().sum()
-    costs = turnover.fillna(0.0) * (tc_bps / 10000.0)
-    net_returns = gross_returns - costs
-    result = pd.DataFrame(
-        {
-            "gross_return": gross_returns,
-            "turnover": turnover.fillna(0.0),
-            "transaction_cost": costs,
-            "net_return": net_returns,
-        },
-        index=returns.index,
-    )
-    active_period = applied_weights.abs().sum(axis=1).gt(1e-12).cummax()
-    result.loc[~active_period, :] = pd.NA
-    return result, applied_weights
-
-
-def apply_volatility_target(
-    returns: pd.DataFrame,
-    base_applied_weights: pd.DataFrame,
-    target_volatility: float = 0.10,
-    window: int = 63,
-    max_leverage: float = 1.5,
-    tc_bps: float = 5.0,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
-    """
-    Scale an already lagged strategy using only past realised strategy returns.
-
-    Raw realised volatility uses rolling base gross returns through t-1 because
-    the scaling series is shifted by one day before being applied.
-    """
-    aligned_weights = base_applied_weights.reindex(returns.index).fillna(0.0)
-    base_gross_returns = (aligned_weights * returns).sum(axis=1)
-    active_period = aligned_weights.abs().sum(axis=1).gt(1e-12).cummax()
-    base_gross_returns.loc[~active_period] = pd.NA
-    realised_volatility = base_gross_returns.rolling(window).std(ddof=0) * np.sqrt(252)
-    raw_scale = target_volatility / realised_volatility
-    scale = raw_scale.clip(lower=0.0, upper=max_leverage).shift(1).fillna(0.0)
-    scaled_weights = base_applied_weights.mul(scale, axis=0)
-    result, weights = run_backtest_from_applied_weights(returns, scaled_weights, tc_bps=tc_bps)
-    return result, weights, scale
-
-
-def run_all_backtests(
-    returns: pd.DataFrame,
-    decisions: dict[str, pd.DataFrame],
-    tc_bps: float = 5.0,
-) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], pd.DataFrame]:
-    backtests: dict[str, pd.DataFrame] = {}
-    applied_weights: dict[str, pd.DataFrame] = {}
-    daily_returns = pd.DataFrame(index=returns.index)
-
-    for strategy, decision_weights in decisions.items():
-        backtest, weights = run_backtest(returns, decision_weights, tc_bps=tc_bps)
-        backtests[strategy] = backtest
-        applied_weights[strategy] = weights
-        daily_returns[strategy] = backtest["net_return"]
-
-    return backtests, applied_weights, daily_returns
+def daily_weight_frame(simulations: dict[str, SimulationResult]) -> pd.DataFrame:
+    frames = {strategy: result.post_trade_weights for strategy, result in simulations.items()}
+    combined = pd.concat(frames, axis=1)
+    combined.columns = [f"{strategy}__{asset}" for strategy, asset in combined.columns]
+    return combined

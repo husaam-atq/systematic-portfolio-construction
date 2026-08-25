@@ -56,6 +56,7 @@ Defaults are chosen before upgraded development results are inspected:
 - Transaction cost: 5 bps per one-way ETF trade.
 - Positive cash return: SHY total return.
 - Financing cost: SHY total return plus 50 bps annual spread for negative cash.
+- Sharpe / Sortino hurdle and Maximum-Sharpe cash rate: contemporaneous or trailing-estimated SHY return, respectively; zero-hurdle Sharpe is retained as a diagnostic.
 - Volatility target robustness levels: 8%, 10% and 12%; 63-day trailing estimator; 1.5x cap.
 - Trend rule: close above 200-day moving average, assessed at the decision close and applied to the next return.
 - Dual momentum: 12-month return excluding the most recent 21 trading days; top three positive risky ETFs; residual to SHY.
@@ -92,6 +93,8 @@ Tactical methods, reported separately:
 ## Development Evaluation
 
 Rolling monthly decisions are genuine walk-forward estimates. Segment evidence will be reported for fixed calendar OOS segments after the initial warm-up, with return, Sharpe, volatility, drawdown, turnover, concentration, risk concentration and benchmark-relative return.
+
+Headline methods are compared from the latest common post-warm-up date. Sensitivity values within a diagnostic family are also aligned to their latest common start, preventing different estimation-window lengths from changing the evaluation sample.
 
 Parameter sensitivity is diagnostic rather than an optimisation grid:
 
