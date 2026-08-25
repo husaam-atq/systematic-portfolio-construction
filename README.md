@@ -10,7 +10,7 @@ Sharpe and Sortino ratios are calculated from returns in excess of the contempor
 
 - The original engine and generated evidence are archived under `archive/baseline_48bcbe9/`.
 - Development research is fixed to 2010-2024.
-- The 2025+ protocol is frozen separately before confirmation and identified by SHA-256 `pending`.
+- The 2025+ protocol is frozen separately before confirmation and identified by SHA-256 `e3b35795c6135bba5bafafc27715c74565e6126a8783da64a69f3944565341f5`.
 - Weak and negative experiments remain in `reports/experiment_log.md` and `outputs/parameter_sensitivity.csv`.
 - No method is selected solely on CAGR or Sharpe.
 
@@ -61,7 +61,27 @@ The table is generated from `outputs/development_performance.csv`. Differences a
 
 ## Fresh Confirmation
 
-Confirmation remains sealed until the frozen protocol is committed.
+Confirmation through 2026-08-24:
+
+| strategy                      | cagr   | sharpe_ratio | annualized_volatility | max_drawdown | average_monthly_turnover | effective_assets_by_weight |
+| ----------------------------- | ------ | ------------ | --------------------- | ------------ | ------------------------ | -------------------------- |
+| Equal Weight                  | 19.05% | 1.61         | 9.15%                 | -7.43%       | 2.51%                    | 8.99                       |
+| Traditional 60/40             | 12.98% | 0.88         | 10.61%                | -10.56%      | 1.48%                    | 1.92                       |
+| Inverse Volatility            | 11.45% | 1.52         | 5.29%                 | -4.28%       | 2.65%                    | 4.64                       |
+| Minimum Variance              | 8.19%  | 1.49         | 3.41%                 | -2.35%       | 4.47%                    | 2.97                       |
+| Minimum Variance Shrinkage    | 7.88%  | 1.42         | 3.42%                 | -2.32%       | 4.23%                    | 3.01                       |
+| Risk Parity                   | 10.96% | 1.51         | 4.98%                 | -4.26%       | 3.41%                    | 4.54                       |
+| Risk Parity Shrinkage         | 11.03% | 1.51         | 5.02%                 | -4.25%       | 3.17%                    | 4.56                       |
+| Hierarchical Risk Parity      | 6.97%  | 0.96         | 4.10%                 | -2.86%       | 8.08%                    | 3.51                       |
+| Maximum Sharpe                | 24.31% | 1.67         | 11.51%                | -9.78%       | 36.05%                   | 3.17                       |
+| Maximum Sharpe Shrinkage      | 24.39% | 1.65         | 11.69%                | -9.90%       | 33.68%                   | 3.38                       |
+| Dual Momentum Equal Weight    | 25.29% | 1.22         | 16.96%                | -12.90%      | 29.25%                   | 3.00                       |
+| Maximum Sharpe Vol Target 10% | 26.13% | 1.82         | 11.27%                | -7.82%       | 55.58%                   | 3.17                       |
+
+- Highest confirmation Sharpe: Maximum Sharpe Vol Target 10% (1.82).
+- Highest confirmation CAGR: Maximum Sharpe Vol Target 10% (26.13%).
+- Shallowest confirmation maximum drawdown: Minimum Variance Shrinkage (-2.32%).
+- Equal Weight recorded 19.05% CAGR, 1.61 Sharpe and -7.43% maximum drawdown over the same short interval.
 
 ## Methods
 
@@ -124,6 +144,10 @@ python -m pytest -q
 - [Limitations](reports/limitations.md)
 
 ## Figures
+
+![Frozen confirmation equity](outputs/figures/confirmation_equity.png)
+
+![Frozen confirmation drawdown](outputs/figures/confirmation_drawdown.png)
 
 ![Development equity](outputs/figures/development_equity.png)
 
